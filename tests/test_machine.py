@@ -1,8 +1,4 @@
-# SPDX-FileCopyrightText: 2025-present Andreas Nachtmann <virtualnonsense@mailbox.org>
-#
-# SPDX-License-Identifier: MIT
-#
-
+from typing import Self, Type
 from datetime import datetime
 import time
 from enum import Enum, auto
@@ -37,9 +33,9 @@ class TestStatemachine:
         return sm
 
     def test_legal_transitions(self, state_machine: StateMachine[State, Trigger]):
-        assert self.State.A == state_machine.state
+        assert state_machine.state == self.State.A
         assert state_machine.fire(self.Trigger.AtoB)
-        assert self.State.B == state_machine.state
+        assert state_machine.state == self.State.B
         assert state_machine.fire(self.Trigger.BtoC)
         assert self.State.C == state_machine.state
         assert state_machine.fire(self.Trigger.CtoA)
@@ -52,7 +48,7 @@ class TestStatemachine:
     def test_subscription(self, state_machine: StateMachine[State, Trigger]):
         times = {}
 
-        def on_exit(arg: StateMachineTransitionArg):
+        def on_exit(arg: StateMachineTransitionArg[self.State, self.Trigger]):
             assert arg.old_state == self.State.A
             assert arg.new_state == self.State.B
             assert arg.trigger == self.Trigger.AtoB
@@ -60,7 +56,7 @@ class TestStatemachine:
             times["exit"] = datetime.now()
             time.sleep(1)
 
-        def on_enter(arg: StateMachineTransitionArg):
+        def on_enter(arg: StateMachineTransitionArg[self.State, self.Trigger]):
             assert arg.old_state == self.State.A
             assert arg.new_state == self.State.B
             assert arg.trigger == self.Trigger.AtoB
@@ -80,13 +76,14 @@ class TestStatemachine:
         )
         trigger_dict = {self.State.A: [], self.State.B: [], self.State.C: []}
 
-        def on_exit_A(arg: StateMachineTransitionArg):
+        def on_exit_A(arg: StateMachineTransitionArg[self.State, self.Trigger]):
             trigger_dict[arg.old_state] += ["exit"]
             assert not arg.passing_by
             assert arg.old_state == self.State.A
             assert arg.new_state == self.State.C
 
-        def on_enter_B(arg: StateMachineTransitionArg):
+        def on_enter_B(arg: StateMachineTransitionArg[self.State, self.Trigger]):
+            assert arg.child_transition is not None
             trigger_dict[arg.child_transition.new_state] += ["enter"]
             assert arg.passing_by
             assert arg.old_state == self.State.A
@@ -96,7 +93,8 @@ class TestStatemachine:
             assert arg.child_transition.new_state == self.State.B
             assert arg.child_transition.trigger is None
 
-        def on_exit_B(arg: StateMachineTransitionArg):
+        def on_exit_B(arg: StateMachineTransitionArg[self.State, self.Trigger]):
+            assert arg.child_transition is not None
             trigger_dict[arg.child_transition.old_state] += ["exit"]
             assert arg.passing_by
             assert arg.old_state == self.State.A
@@ -105,7 +103,7 @@ class TestStatemachine:
             assert arg.child_transition.new_state == self.State.C
             assert arg.child_transition.trigger is None
 
-        def on_enter_C(arg: StateMachineTransitionArg):
+        def on_enter_C(arg: StateMachineTransitionArg[self.State, self.Trigger]):
             trigger_dict[arg.new_state] += ["enter"]
             assert not arg.passing_by
             assert arg.old_state == self.State.A
@@ -194,7 +192,8 @@ class TestComplexStatemachine:
         state, trigger, subtrigger = self.State, self.Trigger, self.SubTrigger
         self.set_return_trigger(sub_trig)
 
-        def _on_entry(arg: StateMachineTransitionArg):
+        def _on_entry(arg: StateMachineTransitionArg[self.State, self.Trigger]):
+            assert arg.child_transition is not None
             check_list.append(arg.child_transition.new_state)
 
         state_machine.subscribe_on_enter(expected_state, _on_entry)

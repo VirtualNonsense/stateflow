@@ -64,12 +64,13 @@ class StateMachineTransitionArg(Generic[STATE, TRIGGER]):
     Trigger used for transition
     """
 
-    child_transition: Optional["StateMachineTransitionArg"] = None
+    child_transition: Optional["StateMachineTransitionArg[STATE, TRIGGER]"] = None
 
     def __str__(self):
         conti = ""
-        if self.passing_by:
+        if self.child_transition is not None:
             conti = f" Subtransition: {self.child_transition._short_info()}"
+        assert self.trigger is not None
         return f"Moving from {self._short_info()} via {self.trigger.name}" + conti
 
     def _short_info(self) -> str:
@@ -91,7 +92,7 @@ class DecisionArg(Generic[STATE, SUBTRIGGER]):
     Argument used in complex sub transitions.
     """
 
-    decision_dict: Dict[SUBTRIGGER, List[Union[STATE, "DecisionArg", None]]]
+    decision_dict: Dict[SUBTRIGGER, List[Union[STATE, "DecisionArg[STATE,SUBTRIGGER]", None]]]
     decision_handler: Callable[[], SUBTRIGGER]
 
 
@@ -104,14 +105,14 @@ class SubStateDecision(Generic[SUBTRIGGER]):
     def __init__(
         self,
         decision_dict: Dict[
-            SUBTRIGGER, List[Union["StateMachineNode", "SubStateDecision", None]]
+            SUBTRIGGER, List[Union["StateMachineNode", "SubStateDecision"]]
         ],
         decision_handler: Callable[[], SUBTRIGGER],
     ):
         self._decision_dict = decision_dict
         self._handler = decision_handler
 
-    def __call__(self) -> List[Union["StateMachineNode", "SubStateDecision", None]]:
+    def __call__(self) -> List[Union["StateMachineNode", "SubStateDecision"]]:
         substate = self._handler()
         if substate not in self._decision_dict:
             raise StateMachineConfigurationError(
@@ -152,7 +153,7 @@ class NodeIterator(Iterator["StateMachineNode"]):
         return _next
 
 
-class StateMachineTransition(Iterable["StateMachineNode"]):
+class StateMachineTransition(Generic[STATE, TRIGGER], Iterable["StateMachineNode[STATE, TRIGGER]"]):
     """
     This class represents the way from :class:`StateMachineNode` to another,
     While the origin and target have to be defined, it is possible to add intermediate nodes in between.
@@ -164,7 +165,7 @@ class StateMachineTransition(Iterable["StateMachineNode"]):
         origin_node: "StateMachineNode[STATE, TRIGGER]",
         target_node: "StateMachineNode[STATE, TRIGGER]",
         intermediate_nodes: List[
-            Union["StateMachineNode", SubStateDecision, None]
+            Union["StateMachineNode", SubStateDecision]
         ] = [],
     ):
         self.trigger = trigger
@@ -199,7 +200,7 @@ class StateMachineNode(Generic[STATE, TRIGGER]):
         self._on_entry = on_entry
         self._on_exit = on_exit
         self._ignored_trigger: List[TRIGGER] = []
-        self._transitions: Dict[TRIGGER, StateMachineTransition] = {}
+        self._transitions: Dict[TRIGGER, StateMachineTransition[STATE, TRIGGER]] = {}
 
     def on_entry(self, arg):
         """triggers the on entry callback"""
@@ -277,7 +278,7 @@ class StateMachineNode(Generic[STATE, TRIGGER]):
         target_node.on_entry(arg)
         return True, target_node.state
 
-    def add_transition(self, transition: StateMachineTransition):
+    def add_transition(self, transition: StateMachineTransition[STATE, TRIGGER]):
         """Adds a transition to the node"""
         trigger = transition.trigger
         if trigger in self._transitions:
@@ -350,14 +351,14 @@ class StateMachine(Generic[STATE, TRIGGER]):
 
     def _on_entry(self, args: StateMachineTransitionArg):
         state = args.new_state
-        if args.passing_by:
+        if args.child_transition is not None:
             state = args.child_transition.new_state
         if state in self._subjects_on_enter:
             self._subjects_on_enter[state](args)
 
     def _on_exit(self, args: StateMachineTransitionArg):
         state = args.old_state
-        if args.passing_by:
+        if args.child_transition is not None:
             state = args.child_transition.old_state
         if state in self._subjects_on_exit:
             self._subjects_on_exit[state](args)
@@ -401,7 +402,7 @@ class StateMachine(Generic[STATE, TRIGGER]):
         start: STATE,
         destination: STATE,
         trigger: TRIGGER,
-        detour_list: Optional[List[Union[STATE, DecisionArg]]] = None,
+        detour_list: Optional[List[Union[STATE, DecisionArg, None]]] = None,
     ):
         """
         Add a transition from `start` to `destination` via `trigger`
@@ -415,10 +416,12 @@ class StateMachine(Generic[STATE, TRIGGER]):
         detour_list = detour_list or []
 
         def _convert(
-            intermediate: List[Union[STATE, DecisionArg]],
+            intermediate: List[Union[STATE, DecisionArg, None]],
         ) -> List[Union[StateMachineNode, SubStateDecision]]:
-            converted_list = []
+            converted_list: List[Union[StateMachineNode, SubStateDecision]] = []
             for inter in intermediate:
+                if inter is None:
+                    break
                 if isinstance(inter, DecisionArg):
                     converted_dict = {}
                     for _trigger, value in inter.decision_dict.items():
